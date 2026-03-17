@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  # ─── ScyllaDB ────────────────────────────────────────────────────────────────
+  scylladb:
+    image: scylladb/scylla:5.4
+    container_name: chain-bd-scylla
+    command: --smp 1 --memory 512M --overprovisioned 1
+    # Port only exposed internally — backend reaches it via service name "scylladb"
+    # Remove host binding to avoid conflict with a locally running ScyllaDB
+    expose:
+      - "9042"
+    volumes:
+      - scylla_data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'SELECT now() FROM system.local' || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ─── Backend (FastAPI) ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: chain-bd-backend
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override localhost → docker service name
+      SCYLLA_HOSTS: scylladb
+    volumes:
+      - ./backend/app:/app/app          # live reload during dev
+      - ./backend/.env:/app/.env
+      - model_data:/app/models
+    depends_on:
+      scylladb:
+        condition: service_healthy
+    restart: on-failure
+
+  # ─── Frontend (Next.js) ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser calls go to host machine port 8001 (published by backend)
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8001
+    container_name: chain-bd-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: on-failure
+
+volumes:
+  scylla_data:
+  model_data:
