@@ -1,11 +1,27 @@
-version: "3.9"
-
 services:
+  scylla-sysctl:
+    image: scylladb/scylla:5.4
+    privileged: true
+    restart: "no"
+    entrypoint:
+      - sysctl
+      - -w
+      - fs.aio-max-nr=1048576
+
   # ─── ScyllaDB ────────────────────────────────────────────────────────────────
   scylladb:
     image: scylladb/scylla:5.4
     container_name: chain-bd-scylla
-    command: --smp 1 --memory 512M --overprovisioned 1
+    depends_on:
+      scylla-sysctl:
+        condition: service_completed_successfully
+    command:
+      - --smp
+      - "1"
+      - --memory
+      - 512M
+      - --overprovisioned
+      - "1"
     # Port only exposed internally — backend reaches it via service name "scylladb"
     # Remove host binding to avoid conflict with a locally running ScyllaDB
     expose:
@@ -26,7 +42,7 @@ services:
       dockerfile: Dockerfile
     container_name: chain-bd-backend
     ports:
-      - "8001:8001"
+      - "${BACKEND_HOST_PORT:-8002}:8001"
     env_file:
       - ./backend/.env
     environment:
@@ -47,11 +63,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Browser calls go to host machine port 8001 (published by backend)
-        NEXT_PUBLIC_API_BASE_URL: http://localhost:8001
+        # Browser calls go to host machine port 8002 by default (published by backend)
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_HOST_PORT:-8002}
     container_name: chain-bd-frontend
     ports:
-      - "3000:3000"
+      - "${FRONTEND_HOST_PORT:-3001}:3000"
     depends_on:
       - backend
     restart: on-failure
